@@ -1,0 +1,235 @@
+# Produccion del Portal de Onboarding de Hefesto.
+#
+# Diferencias con desarrollo, y ninguna es menor:
+#
+#   - APP_DEBUG apagado. Los errores van al registro, nunca a la pantalla.
+#   - La API no se publica: solo la alcanza el proxy interno. La credencial de Coolify
+#     vive en ese contenedor y en ninguno más.
+#   - Redis y PostgreSQL en una red sin salida a internet.
+#   - Hay un servicio mas para las tareas programadas, que vigila que no queden
+#     solicitudes atascadas.
+#
+# Este archivo NO se ha ejecutado. Ver docs/10-PRUEBAS-Y-ESTADO.md.
+
+name: portal-onboarding
+
+services:
+  proxy:
+    image: caddy:2.8.4-alpine
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - certificados:/data
+      - certificados-config:/config
+    depends_on: [api, web]
+    ports:
+      - "80:80"
+      - "443:443"
+    networks: [perimetro, interna]
+
+  api:
+    build:
+      context: ../api
+      dockerfile: ../deploy/api.Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_ENV: produccion
+      APP_DEBUG: "false"
+      APP_KEY: ${APP_KEY:?falta APP_KEY}
+      APP_URL: ${APP_URL:?falta APP_URL}
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_DATABASE: ${DB_DATABASE:-portal_onboarding}
+      DB_USERNAME: ${DB_USERNAME:-portal}
+      DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?falta REDIS_PASSWORD}
+      QUEUE_CONNECTION: redis
+      CACHE_STORE: redis
+      SESSION_DRIVER: redis
+      SESSION_SECURE_COOKIE: "true"
+
+      # Credencial de Coolify: solo existe en este contenedor.
+      COOLIFY_URL_BASE: ${COOLIFY_URL_BASE:?falta COOLIFY_URL_BASE}
+      COOLIFY_TOKEN: ${COOLIFY_TOKEN:?falta COOLIFY_TOKEN}
+      COOLIFY_HABILITADA: ${COOLIFY_HABILITADA:-false}
+      COOLIFY_PERMITIR_DESPLIEGUE: ${COOLIFY_PERMITIR_DESPLIEGUE:-false}
+      COOLIFY_TOKEN_DESPLIEGUE: ${COOLIFY_TOKEN_DESPLIEGUE:-}
+      COOLIFY_SERVIDOR_UUID: ${COOLIFY_SERVIDOR_UUID:-}
+      COOLIFY_ENTORNO: ${COOLIFY_ENTORNO:-production}
+      COOLIFY_IP_PERMITIDAS: ${COOLIFY_IP_PERMITIDAS:-}
+
+      INFISICAL_URL_BASE: ${INFISICAL_URL_BASE:-}
+      INFISICAL_TOKEN: ${INFISICAL_TOKEN:-}
+      INFISICAL_HABILITADA: ${INFISICAL_HABILITADA:-false}
+      INFISICAL_RUTA_VERIFICADA: ${INFISICAL_RUTA_VERIFICADA:-false}
+      INFISICAL_RUTA_CREAR_SECRETO: ${INFISICAL_RUTA_CREAR_SECRETO:-/v3/secrets}
+      INFISICAL_PROYECTO: ${INFISICAL_PROYECTO:-}
+
+      NTFY_URL: ${NTFY_URL:?falta NTFY_URL}
+      NTFY_HABILITADO: ${NTFY_HABILITADO:-false}
+
+      # Identidad por Authentik. El secreto vive solo en este contenedor.
+      AUTHENTIK_URL: ${AUTHENTIK_URL:?falta AUTHENTIK_URL}
+      AUTHENTIK_SLUG: ${AUTHENTIK_SLUG:-portal-onboarding}
+      AUTHENTIK_CLIENT_ID: ${AUTHENTIK_CLIENT_ID:?falta AUTHENTIK_CLIENT_ID}
+      AUTHENTIK_CLIENT_SECRET: ${AUTHENTIK_CLIENT_SECRET:?falta AUTHENTIK_CLIENT_SECRET}
+      AUTHENTIK_REDIRECT_URI: ${AUTHENTIK_REDIRECT_URI:?falta AUTHENTIK_REDIRECT_URI}
+      AUTHENTIK_CORREOS_HFESTO: ${AUTHENTIK_CORREOS_HFESTO:-}
+      AUTHENTIK_DOMINIOS_HFESTO: ${AUTHENTIK_DOMINIOS_HFESTO:-}
+      AUTHENTIK_GRUPO_APROBADORES: ${AUTHENTIK_GRUPO_APROBADORES:-hefesto-aprobadores}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [interna]
+    healthcheck:
+      test: ["CMD", "php", "-r", "exit(@file_get_contents('http://127.0.0.1:9000/api/salud') ? 0 : 1);"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  cola:
+    build:
+      context: ../api
+      dockerfile: ../deploy/api.Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_ENV: produccion
+      APP_DEBUG: "false"
+      APP_KEY: ${APP_KEY}
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_DATABASE: ${DB_DATABASE:-portal_onboarding}
+      DB_USERNAME: ${DB_USERNAME:-portal}
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      QUEUE_CONNECTION: redis
+      COOLIFY_URL_BASE: ${COOLIFY_URL_BASE}
+      COOLIFY_TOKEN: ${COOLIFY_TOKEN}
+      COOLIFY_HABILITADA: ${COOLIFY_HABILITADA:-false}
+      COOLIFY_PERMITIR_DESPLIEGUE: ${COOLIFY_PERMITIR_DESPLIEGUE:-false}
+      INFISICAL_HABILITADA: ${INFISICAL_HABILITADA:-false}
+      NTFY_HABILITADO: ${NTFY_HABILITADO:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [interna]
+    command: php artisan queue:work --queue=aprovisionamiento,credenciales,notificaciones --tries=2 --max-time=3600
+
+  tareas:
+    build:
+      context: ../api
+      dockerfile: ../deploy/api.Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_ENV: produccion
+      APP_DEBUG: "false"
+      APP_KEY: ${APP_KEY}
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_DATABASE: ${DB_DATABASE:-portal_onboarding}
+      DB_USERNAME: ${DB_USERNAME:-portal}
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      CACHE_STORE: redis
+      COOLIFY_URL_BASE: ${COOLIFY_URL_BASE}
+      COOLIFY_TOKEN: ${COOLIFY_TOKEN}
+      COOLIFY_HABILITADA: ${COOLIFY_HABILITADA:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [interna]
+    command: php artisan schedule:work
+
+  web:
+    build:
+      context: ../web
+      dockerfile: ../deploy/web.Dockerfile
+    restart: unless-stopped
+    environment:
+      NUXT_API_BASE: http://api:9000
+    depends_on:
+      - api
+    networks: [interna]
+
+
+  # -------------------------------------------------------------------------
+  # PostgreSQL.
+  #
+  # DOS ROLES, Y NO UNO
+  # -------------------
+  # `POSTGRES_USER` es el rol de ARRANQUE: la imagen oficial ejecuta
+  # `initdb --username="$POSTGRES_USER"` y ese rol nace superusuario. Solo
+  # se usa para crear la base y para las tareas administrativas. La
+  # aplicacion NUNCA conecta con el.
+  #
+  # El rol de la aplicacion (`DB_USERNAME`) lo crea
+  # `deploy/postgres/inicializar-rol.sh` al inicializar el volumen, con
+  # NOSUPERUSER y NOBYPASSRLS explicitos. Le da la propiedad de la base
+  # para que las migraciones de Laravel puedan crear el esquema.
+  #
+  # POR QUE IMPORTA: la documentacion de PostgreSQL 18 dice que los
+  # superusuarios "always bypass the row security system", y que
+  # `FORCE ROW LEVEL SECURITY` sujeta solo al DUENO de la tabla, no al
+  # superusuario. Con un solo rol las politicas no se aplicarian y el
+  # aislamiento entre empresas seria decorativo. Ver docs/03.
+  # -------------------------------------------------------------------------
+  postgres:
+    image: postgres:16.4-alpine3.20
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-portal_onboarding}
+      POSTGRES_USER: ${DB_ADMIN_USERNAME:-portal_onboarding_admin}
+      POSTGRES_PASSWORD: ${DB_ADMIN_PASSWORD:?falta DB_ADMIN_PASSWORD en el .env.prod}
+      # Rol con el que conecta la aplicacion. Lo crea el script de arranque.
+      APP_DB_ROLE: ${DB_USERNAME:-portal}
+      APP_DB_PASSWORD: ${DB_PASSWORD:?falta DB_PASSWORD}
+    volumes:
+      - datos-postgres:/var/lib/postgresql/data
+      - ./postgres/inicializar-rol.sh:/docker-entrypoint-initdb.d/inicializar-rol.sh:ro
+      - ./respaldos:/respaldos
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-portal}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [interna]
+
+  redis:
+    image: redis:7.4.0-alpine3.20
+    restart: unless-stopped
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:?falta REDIS_PASSWORD}
+      --appendonly yes
+    volumes:
+      - datos-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [interna]
+
+volumes:
+  datos-postgres:
+  datos-redis:
+  certificados:
+  certificados-config:
+
+networks:
+  # Con salida a internet: aquí están el proxy y el frontend. Es la única red que la
+  # tiene, y por eso la credencial de Coolify no puede vivr aquí.
+  perimetro:
+  # Sin salida: base de datos, Redis y el backend. Un contenedor comprometido en esta
+  # red no puede llamar a ningún servicio externo por su cuenta.
+  interna:
+    internal: true

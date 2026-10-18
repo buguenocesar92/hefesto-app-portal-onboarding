@@ -1,0 +1,41 @@
+# Proxy inverso del Portal de Onboarding de Hefesto.
+#
+# Dos reglas:
+#   - La API se expone en /api y desde el navegador nunca se ve directamente.
+#   - Todo lo demás va a Nuxt, que hace el renderizado en el servidor.
+
+{
+	{$CORREO_ADMIN} {
+		encode zstd gzip
+
+		header {
+			Strict-Transport-Security "max-age=31536000; includeSubDomains"
+			X-Content-Type-Options "nosniff"
+			X-Frame-Options "DENY"
+			Referrer-Policy "strict-origin-when-cross-origin"
+			-Server
+		}
+
+		# El acceso con Authentik vive en el backend: /auth/entrar, /auth/callback y
+		# /auth/salir. Sin esta ruta, el proxy los mandaría a Nuxt y daría 404.
+		handle /auth/* {
+			reverse_proxy api:9000
+		}
+
+		# La API de Laravel.
+		handle /api/* {
+			reverse_proxy api:9000
+		}
+
+		# El token CSRF lo lee el frontend del servidor; por eso este camino está
+		# abierto a lectura para el navegador, pero toda escritura sigue pasando por
+		# la verificación de Laravel.
+		handle /sanctum/csrf-cookie {
+			reverse_proxy api:9000
+		}
+
+		handle {
+			reverse_proxy web:3000
+		}
+	}
+}

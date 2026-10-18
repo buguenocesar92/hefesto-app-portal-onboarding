@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         cacheDirectory=".phpunit.cache">
+    <testsuites>
+        <testsuite name="Unit">
+            <directory>tests/Unit</directory>
+        </testsuite>
+        <testsuite name="Feature">
+            <directory>tests/Feature</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory>app</directory>
+        </include>
+    </source>
+    <php>
+        <env name="APP_ENV" value="testing"/>
+        <env name="APP_KEY" value="base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="/>
+        <env name="DB_CONNECTION" value="pgsql"/>
+        <env name="DB_DATABASE" value="portal_onboarding_pruebas"/>
+        <env name="QUEUE_CONNECTION" value="sync"/>
+
+        <!-- La integración con Coolify queda apagada en las pruebas: ninguna prueba
+             debe poder alcanzar la plataforma de despliegue real. -->
+        <env name="COOLIFY_HABILITADA" value="false"/>
+        <env name="COOLIFY_PERMITIR_DESPLIEGUE" value="false"/>
+        <env name="INFISICAL_HABILITADA" value="false"/>
+        <env name="NTFY_HABILITADO" value="false"/>
+    </php>
+</phpunit>
